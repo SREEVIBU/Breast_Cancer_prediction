@@ -72,6 +72,13 @@ def main():
     le = artifacts.get("le")
     feature_names = artifacts.get("feature_names")
 
+    # If the model exposes feature_names_in_ use it (convert to list)
+    if artifacts.get("model") is not None and hasattr(artifacts.get("model"), "feature_names_in_"):
+        try:
+            feature_names = list(getattr(artifacts.get("model"), "feature_names_in_"))
+        except Exception:
+            pass
+
     if model is None:
         st.error("Model not loaded. Place a valid 'breast_cancer.pkl' in the project folder.")
 
@@ -86,12 +93,26 @@ def main():
     st.sidebar.markdown("Only manual input mode is enabled for this app.")
     st.sidebar.markdown("---")
     if model is not None:
-        st.sidebar.success(f"Model loaded: {type(model).__name__}")
-        st.sidebar.write(f"Expected features: {getattr(model, 'n_features_in_', len(feature_names) if feature_names else 'unknown')}")
+            st.sidebar.success(f"Model loaded: {type(model).__name__}")
+            st.sidebar.write(f"Expected features: {getattr(model, 'n_features_in_', len(feature_names) if feature_names else 'unknown')}")
 
     # Manual input mode only
     st.subheader("Manual input")
-    if not feature_names:
+    # Determine final required features
+    required_features = feature_names
+    if model is not None and hasattr(model, "n_features_in_"):
+        if required_features is None:
+            # can't infer names, but we know number
+            required_count = int(getattr(model, "n_features_in_"))
+            st.warning(f"Model expects {required_count} features but names are not available. Please include feature_names in the pickle.")
+            return
+        else:
+            # ensure count matches
+            if len(required_features) != int(getattr(model, "n_features_in_")):
+                st.error(f"Feature count mismatch: model expects {int(getattr(model, 'n_features_in_'))} features but {len(required_features)} were inferred.")
+                st.stop()
+
+    if not required_features:
         st.error("Feature names not available; please include `feature_names` in the pickle.")
         return
 
@@ -110,9 +131,13 @@ def main():
 
         submit = st.form_submit_button("Predict")
         if submit:
-            X = np.array([inputs[f] for f in feature_names], dtype=float).reshape(1, -1)
-            res = predict_from_array(model, scaler, le, X)
-            st.write(res)
+            X = np.array([inputs[f] for f in required_features], dtype=float).reshape(1, -1)
+            # validate feature length against model
+            if model is not None and hasattr(model, "n_features_in_") and X.shape[1] != int(getattr(model, "n_features_in_")):
+                st.error(f"Input feature length {X.shape[1]} does not match model expectation {int(getattr(model, 'n_features_in_'))}.")
+            else:
+                res = predict_from_array(model, scaler, le, X)
+                st.success(f"Prediction: {res}")
 
     # Display only a short instruction
     st.markdown("---")
